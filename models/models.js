@@ -18,9 +18,10 @@ const dppSchema = new mongoose.Schema({
   subject:    { type: String, required: true, enum: ['Physics','Chemistry','Maths','Biology'] },
   class:      { type: String },
   question:   { type: String, required: true },
-  options:    [{ type: String }],     // 4 options
-  answerIndex:{ type: Number },       // 0-3
+  options:    [{ type: String }],
+  answerIndex:{ type: Number },
   explanation:{ type: String },
+  source:     { type: String, enum: ['manual','ai'], default: 'manual' },
   date:       { type: Date, default: Date.now },
   addedBy:    { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 });
