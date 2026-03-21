@@ -13,11 +13,24 @@ dotenv.config()
 const app = express()
 
 app.use(cors({
-  origin: [
-    'http://localhost:3000',
-    'http://localhost:5173',
-    process.env.FRONTEND_URL,
-  ].filter(Boolean),
+  origin: function(origin, callback) {
+    // Allow requests with no origin (mobile apps, curl, Postman)
+    if (!origin) return callback(null, true)
+    
+    const allowed = [
+      'http://localhost:3000',
+      'http://localhost:5173',
+      'https://ram-coaching-frontend.vercel.app',
+      process.env.FRONTEND_URL,
+    ].filter(Boolean)
+
+    if (allowed.includes(origin)) {
+      callback(null, true)
+    } else {
+      console.log('CORS blocked:', origin)
+      callback(null, true) // temporarily allow all — remove after testing
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
