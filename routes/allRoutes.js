@@ -15,7 +15,7 @@ const dppRouter = express.Router();
 // ── Helper: Generate questions via Google Gemini (FREE) ───────
 async function generateAIQuestions(subject, cls) {
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' })
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
   const prompt = `Generate exactly 5 multiple choice questions for Class ${cls} ${subject} students preparing for JEE/NEET/Board exams in India.
 
 Return ONLY a valid JSON array. No markdown, no explanation, no extra text:
