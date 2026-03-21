@@ -1,6 +1,5 @@
 # 🏫 Ram Coaching Classes — Full Stack Website
 
-> Pimpri, Pune | Classes 9–12 | JEE & NEET | Built with React + Node.js + MongoDB
 
 ---
 
@@ -219,4 +218,3 @@ npm run build
 
 ---
 
-*Built for Ram Coaching Classes, Pimpri, Pune | 2025*
