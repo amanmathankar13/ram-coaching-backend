@@ -15,8 +15,15 @@ const dppRouter = express.Router();
 // ── Helper: Generate questions via Google Gemini (FREE) ───────
 async function generateAIQuestions(subject, cls) {
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
-  const prompt = `Generate exactly 5 multiple choice questions for Class ${cls} ${subject} students preparing for JEE/NEET/Board exams in India.
+
+  // Try models in order until one works
+  const models = ['gemini-2.0-flash', 'gemini-1.5-flash-latest', 'gemini-pro'];
+
+  for (const modelName of models) {
+    try {
+      const model = genAI.getGenerativeModel({ model: modelName });
+
+      const prompt = `Generate exactly 5 multiple choice questions for Class ${cls} ${subject} students preparing for JEE/NEET/Board exams in India.
 
 Return ONLY a valid JSON array. No markdown, no explanation, no extra text:
 [
@@ -35,6 +42,33 @@ Rules:
 - Mix of easy, medium and hard difficulty
 - Questions should be different each time`;
 
+      const result = await model.generateContent(prompt);
+      const text   = result.response.text().trim();
+      const clean  = text.replace(/```json|```/g, '').trim();
+      const parsed = JSON.parse(clean);
+
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        console.log(`✅ AI questions generated using model: ${modelName}`);
+        return parsed;
+      }
+    } catch (modelErr) {
+      console.log(`⚠️ Model ${modelName} failed: ${modelErr.message}, trying next...`);
+      continue;
+    }
+  }
+
+  throw new Error('All Gemini models failed to generate questions');
+}
+
+// ── Helper: Retry with simpler prompt ─────────────────────────
+async function retryAIQuestions(subject) {
+  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
+  const prompt = `Give 5 MCQ questions on ${subject} for Class 12.
+JSON array only, no other text:
+[{"question":"...","options":["A","B","C","D"],"answerIndex":0,"explanation":"..."}]`;
+
   const result = await model.generateContent(prompt);
   const text   = result.response.text().trim();
   const clean  = text.replace(/```json|```/g, '').trim();
@@ -42,54 +76,80 @@ Rules:
 }
 
 // ── GET /api/dpp?subject=Physics&class=12-PCM ─────────────────
-// HYBRID: manual questions first → Gemini AI fallback → empty (local fallback)
+// HYBRID: manual questions first → Gemini AI → retry → empty
 dppRouter.get('/', protect, approved, async (req, res) => {
   const { subject, class: cls } = req.query;
   const studentClass = cls || req.user.class || '12';
+  const subjectName  = subject || 'Physics';
 
   try {
     // Step 1: Check if admin added manual questions today
     const today    = new Date(); today.setHours(0,0,0,0);
     const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
 
-    const filter = { date: { $gte: today, $lt: tomorrow }, source: 'manual' };
-    if (subject) filter.subject = subject;
-
-    const manualQuestions = await DPP.find(filter).limit(5);
+    const manualQuestions = await DPP.find({
+      subject: subjectName,
+      source:  'manual',
+      date:    { $gte: today, $lt: tomorrow },
+    }).limit(5);
 
     if (manualQuestions.length > 0) {
-      // Admin set questions today — use them
+      console.log(`✅ Manual questions found for ${subjectName}`);
       return res.json({ questions: manualQuestions, source: 'manual' });
     }
 
-    // Step 2: No manual questions — generate with Gemini AI (free)
+    // Step 2: No manual questions — generate with Gemini AI
+    console.log(`🤖 No manual questions for ${subjectName}, generating with AI...`);
+
     if (!process.env.GEMINI_API_KEY) {
-      // No AI key configured — return empty, frontend uses local fallback
+      console.log('⚠️ GEMINI_API_KEY not set in environment variables');
       return res.json({ questions: [], source: 'none' });
     }
 
-    const aiQuestions = await generateAIQuestions(
-      subject || 'Physics',
-      studentClass.replace('-PCM','').replace('-PCB','')
-    );
+    const cleanClass = studentClass.replace('-PCM','').replace('-PCB','');
 
-    // Map AI response to schema shape
-    const formatted = aiQuestions.map(q => ({
-      subject:     subject || 'Physics',
-      class:       studentClass,
-      question:    q.question,
-      options:     q.options,
-      answerIndex: q.answerIndex,
-      explanation: q.explanation,
-      source:      'ai',
-      date:        new Date(),
-    }));
+    try {
+      const aiQuestions = await generateAIQuestions(subjectName, cleanClass);
 
-    return res.json({ questions: formatted, source: 'ai' });
+      const formatted = aiQuestions.map(q => ({
+        subject:     subjectName,
+        class:       studentClass,
+        question:    q.question,
+        options:     q.options,
+        answerIndex: q.answerIndex,
+        explanation: q.explanation || '',
+        source:      'ai',
+        date:        new Date(),
+      }));
+
+      console.log(`✅ AI generated ${formatted.length} questions for ${subjectName}`);
+      return res.json({ questions: formatted, source: 'ai' });
+
+    } catch (aiErr) {
+      // AI failed — try once more with simpler prompt
+      console.log(`⚠️ AI generation failed: ${aiErr.message}, retrying with simpler prompt...`);
+      try {
+        const retried   = await retryAIQuestions(subjectName);
+        const formatted = retried.map(q => ({
+          subject:     subjectName,
+          class:       studentClass,
+          question:    q.question,
+          options:     q.options,
+          answerIndex: q.answerIndex,
+          explanation: q.explanation || '',
+          source:      'ai',
+          date:        new Date(),
+        }));
+        console.log(`✅ Retry successful — ${formatted.length} questions`);
+        return res.json({ questions: formatted, source: 'ai' });
+      } catch (retryErr) {
+        console.error(`❌ Retry also failed: ${retryErr.message}`);
+        return res.json({ questions: [], source: 'error', error: retryErr.message });
+      }
+    }
 
   } catch (err) {
-    console.error('DPP route error:', err.message);
-    // Return empty — frontend will use local fallback
+    console.error('❌ DPP route error:', err.message);
     return res.json({ questions: [], source: 'error', error: err.message });
   }
 });
