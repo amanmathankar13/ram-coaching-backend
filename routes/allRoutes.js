@@ -1,10 +1,10 @@
 // ══════════════════════════════════════════════════════════════
-//  allRoutes.js — DPP (Hybrid Gemini AI + Manual), Notices, Inquiries
-//  Free AI: Google Gemini (aistudio.google.com — free tier)
+//  allRoutes.js — DPP (Hybrid Groq AI + Manual), Notices, Inquiries
+//  Free AI: Groq (console.groq.com — free tier, 14400 req/day)
 // ══════════════════════════════════════════════════════════════
 
 const express    = require('express');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const Groq       = require('groq-sdk');
 const { DPP, Notice, Inquiry } = require('../models/models');
 const { protect, adminOnly, approved } = require('../middleware/authMiddleware');
 const nodemailer = require('nodemailer');
@@ -12,18 +12,17 @@ const nodemailer = require('nodemailer');
 // ── DPP Router ────────────────────────────────────────────────
 const dppRouter = express.Router();
 
-// ── Helper: Generate questions via Google Gemini (FREE) ───────
+// ── Helper: Generate questions via Groq (FREE — Llama 3) ─────
 async function generateAIQuestions(subject, cls) {
-  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-  // Try models in order until one works
-  const models = ['gemini-2.0-flash', 'gemini-1.5-flash-latest', 'gemini-pro'];
-
-  for (const modelName of models) {
-    try {
-      const model = genAI.getGenerativeModel({ model: modelName });
-
-      const prompt = `Generate exactly 5 multiple choice questions for Class ${cls} ${subject} students preparing for JEE/NEET/Board exams in India.
+  const completion = await groq.chat.completions.create({
+    model:       'llama3-8b-8192',
+    max_tokens:  1024,
+    temperature: 0.7,
+    messages: [{
+      role:    'user',
+      content: `Generate exactly 5 multiple choice questions for Class ${cls} ${subject} students preparing for JEE/NEET/Board exams in India.
 
 Return ONLY a valid JSON array. No markdown, no explanation, no extra text:
 [
@@ -40,43 +39,44 @@ Rules:
 - Each question must have exactly 4 options
 - answerIndex must be 0, 1, 2, or 3
 - Mix of easy, medium and hard difficulty
-- Questions should be different each time`;
+- Questions should be different each time`
+    }]
+  });
 
-      const result = await model.generateContent(prompt);
-      const text   = result.response.text().trim();
-      const clean  = text.replace(/```json|```/g, '').trim();
-      const parsed = JSON.parse(clean);
+  const text   = completion.choices[0].message.content.trim();
+  const clean  = text.replace(/```json|```/g, '').trim();
+  const parsed = JSON.parse(clean);
 
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        console.log(`✅ AI questions generated using model: ${modelName}`);
-        return parsed;
-      }
-    } catch (modelErr) {
-      console.log(`⚠️ Model ${modelName} failed: ${modelErr.message}, trying next...`);
-      continue;
-    }
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error('Groq returned empty or invalid response');
   }
 
-  throw new Error('All Gemini models failed to generate questions');
+  console.log(`✅ Groq generated ${parsed.length} questions for ${subject}`);
+  return parsed;
 }
 
 // ── Helper: Retry with simpler prompt ─────────────────────────
 async function retryAIQuestions(subject) {
-  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-  const prompt = `Give 5 MCQ questions on ${subject} for Class 12.
-JSON array only, no other text:
-[{"question":"...","options":["A","B","C","D"],"answerIndex":0,"explanation":"..."}]`;
+  const completion = await groq.chat.completions.create({
+    model:      'llama3-8b-8192',
+    max_tokens: 800,
+    messages: [{
+      role:    'user',
+      content: `Give 5 MCQ questions on ${subject} for Class 12 India board exam.
+Return JSON array only, no other text:
+[{"question":"...","options":["A","B","C","D"],"answerIndex":0,"explanation":"..."}]`
+    }]
+  });
 
-  const result = await model.generateContent(prompt);
-  const text   = result.response.text().trim();
-  const clean  = text.replace(/```json|```/g, '').trim();
+  const text  = completion.choices[0].message.content.trim();
+  const clean = text.replace(/```json|```/g, '').trim();
   return JSON.parse(clean);
 }
 
 // ── GET /api/dpp?subject=Physics&class=12-PCM ─────────────────
-// HYBRID: manual questions first → Gemini AI → retry → empty
+// HYBRID: manual questions first → Groq AI → retry → empty
 dppRouter.get('/', protect, approved, async (req, res) => {
   const { subject, class: cls } = req.query;
   const studentClass = cls || req.user.class || '12';
@@ -98,11 +98,11 @@ dppRouter.get('/', protect, approved, async (req, res) => {
       return res.json({ questions: manualQuestions, source: 'manual' });
     }
 
-    // Step 2: No manual questions — generate with Gemini AI
-    console.log(`🤖 No manual questions for ${subjectName}, generating with AI...`);
+    // Step 2: No manual questions — generate with Groq AI
+    console.log(`🤖 No manual questions for ${subjectName}, generating with Groq AI...`);
 
-    if (!process.env.GEMINI_API_KEY) {
-      console.log('⚠️ GEMINI_API_KEY not set in environment variables');
+    if (!process.env.GROQ_API_KEY) {
+      console.log('⚠️ GROQ_API_KEY not set in Railway environment variables');
       return res.json({ questions: [], source: 'none' });
     }
 
@@ -122,12 +122,10 @@ dppRouter.get('/', protect, approved, async (req, res) => {
         date:        new Date(),
       }));
 
-      console.log(`✅ AI generated ${formatted.length} questions for ${subjectName}`);
       return res.json({ questions: formatted, source: 'ai' });
 
     } catch (aiErr) {
-      // AI failed — try once more with simpler prompt
-      console.log(`⚠️ AI generation failed: ${aiErr.message}, retrying with simpler prompt...`);
+      console.log(`⚠️ Groq generation failed: ${aiErr.message}, retrying...`);
       try {
         const retried   = await retryAIQuestions(subjectName);
         const formatted = retried.map(q => ({
@@ -143,7 +141,7 @@ dppRouter.get('/', protect, approved, async (req, res) => {
         console.log(`✅ Retry successful — ${formatted.length} questions`);
         return res.json({ questions: formatted, source: 'ai' });
       } catch (retryErr) {
-        console.error(`❌ Retry also failed: ${retryErr.message}`);
+        console.error(`❌ Retry failed: ${retryErr.message}`);
         return res.json({ questions: [], source: 'error', error: retryErr.message });
       }
     }
