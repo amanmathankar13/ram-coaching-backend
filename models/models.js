@@ -52,4 +52,25 @@ const inquirySchema = new mongoose.Schema({
 });
 const Inquiry = mongoose.model('Inquiry', inquirySchema);
 
-module.exports = { Material, DPP, Notice, Inquiry };
+// ─── Timetable ───────────────────────────────────────────────
+const timetableSchema = new mongoose.Schema({
+  class:    { type: String, required: true }, // '9','10','11-PCM' etc
+  day:      { type: String, required: true }, // 'Monday' etc
+  subject:  { type: String, required: true },
+  time:     { type: String, required: true }, // '6:00 – 7:30 AM'
+  faculty:  { type: String, default: '' },
+  order:    { type: Number, default: 0 },     // for sorting days
+}, { timestamps: true });
+const Timetable = mongoose.model('Timetable', timetableSchema);
+
+// ─── Subject ──────────────────────────────────────────────────
+const subjectSchema = new mongoose.Schema({
+  class:    { type: String, required: true },
+  name:     { type: String, required: true },
+  color:    { type: String, default: 'var(--accent)' },
+  tags:     [{ type: String }],
+  order:    { type: Number, default: 0 },
+}, { timestamps: true });
+const Subject = mongoose.model('Subject', subjectSchema);
+
+module.exports = { Material, DPP, Notice, Inquiry, Timetable, Subject };
