@@ -2,18 +2,17 @@
 const express  = require('express');
 const router   = express.Router();
 const { Timetable, Subject } = require('../models/models');
-const { protect, adminOnly, approved } = require('../middleware/authMiddleware');
+const { protect, adminOnly } = require('../middleware/authMiddleware');
 
 const DAY_ORDER = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 
 // ── TIMETABLE ─────────────────────────────────────────────────
 
-// GET /api/timetable?class=12-PCM — student fetches their class timetable
-router.get('/', protect, approved, async (req, res) => {
+// GET /api/timetable?class=12-PCM — PUBLIC (no login needed)
+router.get('/', async (req, res) => {
   try {
-    const cls = req.query.class || req.user.class;
-    const rows = await Timetable.find({ class: cls }).sort('order');
-    // Sort by day order
+    const cls = req.query.class || '12-PCM';
+    const rows = await Timetable.find({ class: cls });
     rows.sort((a, b) => DAY_ORDER.indexOf(a.day) - DAY_ORDER.indexOf(b.day));
     res.json(rows);
   } catch (err) {
@@ -70,10 +69,10 @@ router.delete('/:id', protect, adminOnly, async (req, res) => {
 
 // ── SUBJECTS ──────────────────────────────────────────────────
 
-// GET /api/timetable/subjects?class=12-PCM
-router.get('/subjects', protect, approved, async (req, res) => {
+// GET /api/timetable/subjects?class=12-PCM — PUBLIC (no login needed)
+router.get('/subjects', async (req, res) => {
   try {
-    const cls = req.query.class || req.user.class;
+    const cls = req.query.class || '12-PCM';
     const subjects = await Subject.find({ class: cls }).sort('order');
     res.json(subjects);
   } catch (err) {
@@ -100,7 +99,12 @@ router.post('/subjects', protect, adminOnly, async (req, res) => {
     if (!cls || !name)
       return res.status(400).json({ message: 'class and name are required.' });
     const count = await Subject.countDocuments({ class: cls });
-    const subject = await Subject.create({ class: cls, name, color: color || 'var(--accent)', tags: tags || [], order: count });
+    const subject = await Subject.create({
+      class: cls, name,
+      color: color || 'var(--accent)',
+      tags:  tags || [],
+      order: count,
+    });
     res.status(201).json(subject);
   } catch (err) {
     res.status(500).json({ message: err.message });
